@@ -1,4 +1,3 @@
-var request = require("request");
 var fs = require("fs");
 module.exports = {
     name: "friendly", // name of module
@@ -33,6 +32,7 @@ Client: Your standard Discord Client.
 */
 module.exports.initialise = function(client) {
     Client = client;
+    console.log("Initialised!");
 };
 module.exports.close = function(client) {
     console.log("Goodbye!");
