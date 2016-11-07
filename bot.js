@@ -1,5 +1,6 @@
 var Discord = require("discord.js");
 var fs = require("fs");
+var request = require("request");
 var zeroWidthSpace = "\u200b"; // at front of safe bot things
 var token = "";
 var Command, commands;
@@ -23,25 +24,26 @@ fs.readFile(__dirname + "/token.txt", "utf8", function(err, data) {
         console.log(err);
     });
 });
-// get memory from file
-var memory = {}; // for remember and recall
-fs.readFile(__dirname + "/memory.txt", "utf8", function(err, data) {
-    if (err) {
-        return console.log(err);
-    }
-    var tokens = data.split("\n");
-    for (var i=0;i<tokens.length;i++) {
-        if (tokens[i] !== "") {
-            var spaceTokens = tokens[i].split(" ");
-            memory[spaceTokens[0]] = spaceTokens.slice(1).join(" ").replace("\\n", "\n");
-        }
-    }
-    console.log("Obtained memory!");
-});
+
+var send = function(message, toSend) {
+    message.channel.sendMessage(toSend).then(function() {
+        console.log("Message sent.");
+    }).catch(function() {
+        console.log("Failed to send message.");
+    });
+};
+var sendDM = function(message, toSend) {
+    message.author.sendMessage(toSend).then(function() {
+        console.log("DM sent.");
+    }).catch(function() {
+        console.log("Failed to send DM.");
+    });
+};
 
 /** Github interaction **/
 var githubToken = "";
 var modules = [];
+var checkModules = [];
 var apiString = function(user, repo, file) {
     return "https://api.github.com/repos/"+user+"/"+repo+"/contents/"+file+"?access_token="+gitHubToken;
 };
@@ -49,27 +51,77 @@ var getFileName = function(user, repo, file) {
     if (!file.endsWith(".js")) file += ".js"; // slightly safer
     return "module "+user+" "+repo+" "+file;
 };
-var loadModule = function(user, repo, file) {
-    fileName = getFileName(user, repo, file);
-    apiCall = apiString(user, repo, file);
-    request(apiCall).on("error", function(err) {
-        console.log(error);
-    }).pipe(fs.createWriteStream(fileName)).on("finish", function() {
-        var module = modules.push(request("./"+fileName.slice(0, -3)));
+var runModule = function(fileName, message) {
+    try {
+        var module = require("./"+fileName.slice(0, -3)); // remove.js
+        console.log(module);
+        modules.push(module);
+        for (var i in module) {
+            console.log("Found "+i);
+        }
         if (module.initialise) {
             module.initialise(bot);
-        }
-        if (module.initialize) {
+        } else if (module.initialize) {
             module.initialize(bot);
         }
         if (module.commands) {
             for (var i=0;i<module.commands.length;i++) {
-                commands.push()
+                console.log("New command: " + module.commands[i].word);
+                commands.push(new Command(module.commands[i]));
             }
+        }
+        commands.sort(function(a, b) {
+            if (a.word < b.word) return -1;
+            if (a.word > b.word) return 1;
+            return 0;
+        });
+        if (message) {
+            send(message, "Loaded module!");
+        } else {
+            console.log("Loaded module!");
+        }
+    } catch (error) {
+        console.log(error);
+        if (message) {
+            send(message, "The module seems to have a problem.");
+        } else {
+            console.log("The module seems to have a problem.");
+        }
+    }
+};
+var loadModule = function(message, user, repo, file) {
+    fileName = getFileName(user, repo, file);
+    apiCall = apiString(user, repo, file);
+    request({
+        url: apiCall,
+        headers: {
+            "User-Agent": "Element118"
+        }
+    }, function(error, response, body) {
+        if (error) {
+            console.log("API call error!");
+            console.log(error);
+            return;
+        }
+        if (response.statusCode === 200) {
+            var info = JSON.parse(body);
+            var program = new Buffer(info.content, "base64");
+            fs.writeFile(__dirname + "/" + fileName, program, function(error) {
+                if (error) {
+                    console.log(error);
+                    return;
+                }
+                checkModules.push({
+                    fileName: fileName,
+                    message: message,
+                    content: program.toString("ascii")
+                });
+                console.log("New module!");
+            });
         }
     });
 };
-
+var currentModule = -1;
 process.stdin.on("data", function(data) {
     data = (data+"").trim();
     if (data == "exit" || data == "logout") {
@@ -104,6 +156,27 @@ process.stdin.on("data", function(data) {
             console.log("All modules completed!");
             process.exit();
         }
+    } else if (data.startsWith("checkmodules ")) {
+        var num = data.substr("checkmodules ".length)%checkModules.length;
+        if (0 <= num && num < checkModules.length) {
+            currentModule = num;
+            console.log(checkModules[currentModule].content);
+        } else {
+            currentModule = -1;
+            console.log("Cannot parse number, or no modules found.");
+        }
+    } else if (data === "verify") {
+        runModule(checkModules[currentModule].fileName, checkModules[currentModule].message);
+        checkModules.splice(currentModule, 1);
+        currentModule = -1;
+    } else if (data === "disapprove") {
+        checkModules.splice(currentModule, 1);
+        currentModule = -1;
+    } else if (data === "allmodules") {
+        console.log("Here are all the modules:");
+        for (var i=0;i<modules.length;i++) {
+            console.log(modules[i].name);
+        }
     } else {
         console.log("Noted "+data.length+" characters: \""+data+"\".");
     }
@@ -118,20 +191,6 @@ Command = function(config) {
 Command.prefix = "~M~";
 Command.check = function(command) {
     return command.startsWith(Command.prefix);
-};
-var send = function(message, toSend) {
-    message.channel.sendMessage(toSend).then(function() {
-        console.log("Message sent.");
-    }).catch(function() {
-        console.log("Failed to send message.");
-    });
-};
-var sendDM = function(message, toSend) {
-    message.author.sendMessage(toSend).then(function() {
-        console.log("DM sent.");
-    }).catch(function() {
-        console.log("Failed to send DM.");
-    });
 };
 var parseTime = function(milliseconds) {
     var seconds = Math.floor(milliseconds/1000); milliseconds %= 1000;
@@ -195,7 +254,7 @@ commands = [
         word: "github",
         description: "Oh, you want to know more about me? I'm flattered...",
         execute: function(message, parsedMessage) {
-            sendDM(message, "Visit me on GitHub: https://github.com/Element118/ElementBot-discord/tree/master");
+            sendDM(message, "Visit me on GitHub: https://github.com/Element118/metabotic-discord");
         }
     }), new Command({
         word: "recall",
@@ -223,7 +282,7 @@ commands = [
             var tokens = parsedMessage.split(" ");
             if (tokens.length >= 3) {
                 var user = tokens[0], repo = tokens[1], file = tokens.slice(2).join(" ");
-                loadModule(user, repo, file);
+                loadModule(message, user, repo, file);
             } else {
                 send(message, "The command expects 3 arguments, GitHub username, name of repository, file name.");
             }
@@ -235,6 +294,8 @@ commands.sort(function(a, b) {
     if (a.word > b.word) return 1;
     return 0;
 });
+//runModule("friendly.js");
+
 var detectCommand = function(message) {
     var tokens = message.content.split(" ");
     var commandSpaces = Command.prefix.length - Command.prefix.replace(" ", "").length;
