@@ -89,6 +89,20 @@ var runModule = function(fileName, message) {
         }
     }
 };
+
+// get list of modules to load on startup
+fs.readFile(__dirname + "/autoload.txt", "utf8", function(err, data) {
+    if (err) {
+        return console.log(err);
+    }
+    var tokens = data.split("\n");
+    for (var i=0;i<tokens.length;i++) {
+        if (tokens[i] !== "") {
+            runModule(tokens[i]);
+        }
+    }
+});
+
 var loadModule = function(message, user, repo, file) {
     fileName = getFileName(user, repo, file);
     apiCall = apiString(user, repo, file);
@@ -257,25 +271,6 @@ commands = [
             sendDM(message, "Visit me on GitHub: https://github.com/Element118/metabotic-discord");
         }
     }), new Command({
-        word: "recall",
-        description: "Recall something you told me to "+Command.prefix+"remember.\nSyntax: "+Command.prefix+"recall identifier",
-        execute: function(message, parsedMessage) {
-            if (!message.author.bot) accessedMemory = {}; // allow for more loops
-            if (accessedMemory[parsedMessage]) {
-                send(message, zeroWidthSpace+"Oops, we are in a loop!");
-                accessedMemory = {}; // allow for more loops
-            } else {
-                send(message, memory[parsedMessage]);
-                if (message.author.bot) accessedMemory[parsedMessage] = true;
-            }
-        }
-    }), new Command({
-        word: "bot",
-        description: "Design a bot!",
-        execute: function(message, parsedMessage) {
-            // detect command-result pair
-        }
-    }), new Command({
         word: "addmodule",
         description: "Design a bot!",
         execute: function(message, parsedMessage) {
@@ -294,7 +289,6 @@ commands.sort(function(a, b) {
     if (a.word > b.word) return 1;
     return 0;
 });
-//runModule("friendly.js");
 
 var detectCommand = function(message) {
     var tokens = message.content.split(" ");
