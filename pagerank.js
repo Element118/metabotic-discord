@@ -17,10 +17,9 @@ var getFileName = function(server, category) {
 
 /*
 TODO:
-1. New users.
-2. Documentation.
-3. Efficiency.
-4. Actually giving roles.
+1. FileSystem file finder.
+2. Efficiency.
+3. Actually giving roles.
 */
 /*
 var Priority_Queue = function(init, cmpre) {
@@ -43,7 +42,7 @@ var dampingFactor = 0.85;
  */
 var PageRank = function() {
     this.server = null;
-    this.category = null;
+    this.category = "";
     this.userNames = [];
     this.users = [];
     this.userIdMap = null;
@@ -148,6 +147,20 @@ PageRank.prototype.parseFile = function(server, category) {
                 }
             }
             _this.generateUserIdMap();
+            var existNewUsers = false;
+            members.forEach(function(value) {
+                if (!value.id) {
+                    existNewUsers = true;
+                    _this.users.push(value.id);
+                    _this.userNames.push(user.username+"#"+user.discriminator);
+                    _this.ranks.push(0);
+                    _this.adjList.push([]);
+                }
+            });
+            if (existNewUsers) {
+                _this.iterate(10);
+            }
+            _this.generateUserIdMap();
             resolve();
         });
     });
@@ -193,6 +206,20 @@ PageRank.prototype.parseFileSafe = function(server, category) {
                 }
             }
             _this.generateUserIdMap();
+            var existNewUsers = false;
+            members.forEach(function(value) {
+                if (!value.id) {
+                    existNewUsers = true;
+                    _this.users.push(value.id);
+                    _this.userNames.push(user.username+"#"+user.discriminator);
+                    _this.ranks.push(0);
+                    _this.adjList.push([]);
+                }
+            });
+            if (existNewUsers) {
+                _this.iterate(10);
+            }
+            _this.generateUserIdMap();
             resolve();
         });
     });
@@ -223,6 +250,7 @@ PageRank.prototype.save = function() {
         });
     });
 };
+
 /**
  * Using an object to store the PageRank objects in.
  */
@@ -398,14 +426,13 @@ module.exports.commands.push({
             sendDM(message, "Sorry, this does not work yet. You can contact Element118 to delete the category for now.");
         }
     }
-}/*, {
+}, {
     word: "viewcategories",
     description: "View all categories on the current server. Use: ~M~viewcategories",
     execute: function(message, parsedMessage) {
-        //
-        send(message, "Hi! I'm from another module!");
+        sendDM(message, "Sorry, this isn't working yet. Element118 is looking at accessing file systems.");
     }
-}*/, {
+}, {
     word: "viewcategory",
     description: "View the top users in a particular category. Use: ~M~viewcategory some_category num_users",
     execute: function(message, parsedMessage) {
@@ -477,6 +504,61 @@ module.exports.commands.push({
 
 module.exports.initialise = function(client) {
     Client = client;
+    Client.on("guildMemberRemove", function(guildMember) {
+        // Loop through all the guilds
+        var user = guildMember.user;
+        for (var i in pageRanks) {
+            if (pageRanks[i].server.id == guildMember.guild.id) {
+                // Replace member with last member
+                var removeUser = pageRanks[i].userIdMap[user.id];
+                var lastMember = pageRanks[i].users.length-1;
+                if (removeUser != lastMember) {
+                    // remove user from adjacency list
+                    for (var j=0;j<pageRanks[i].adjList.length;j++) {
+                        var index = pageRanks[i].adjList[j].indexOf(removeUser);
+                        if (index != -1) {
+                            pageRanks[i].adjList[j].splice(index, 1);
+                        }
+                    }
+                    // remove user from map
+                    delete pageRanks[i].userIdMap[user.id];
+                    // replace user in adjacency list
+                    for (var j=0;j<pageRanks[i].adjList.length;j++) {
+                        var index = pageRanks[i].adjList[j].indexOf(lastMember);
+                        if (index != -1) {
+                            pageRanks[i].adjList[j][index] = removeUser;
+                        }
+                    }
+                    pageRanks[i].users[removeUser] = pageRanks[i].users[lastMember];
+                    pageRanks[i].userNames[removeUser] = pageRanks[i].userNames[lastMember];
+                    pageRanks[i].ranks[removeUser] = pageRanks[i].ranks[lastMember];
+                    pageRanks[i].adjList[removeUser] = pageRanks[i].adjList[lastMember];
+                    pageRanks[i].userIdMap[pageRanks[i].users[lastMember]] = removeUser;
+                }
+                // Pop last member
+                pageRanks[i].users.pop();
+                pageRanks[i].userNames.pop();
+                pageRanks[i].ranks.pop();
+                pageRanks[i].adjList.pop();
+                pageRanks[i].iterate(10);
+            }
+        }
+    });
+    Client.on("guildMemberAdd", function(guildMember) {
+        // Loop through all the guilds
+        var user = guildMember.user;
+        for (var i in pageRanks) {
+            if (pageRanks[i].server.id == guildMember.guild.id) {
+                // Add member
+                pageRanks[i].users.push(user.id);
+                pageRanks[i].userNames.push(user.username+"#"+user.discriminator);
+                pageRanks[i].ranks.push(0);
+                pageRanks[i].adjList.push([]);
+                pageRanks[i].userIdMap[user.id] = pageRanks[i].users.length-1;
+                pageRanks[i].iterate(10);
+            }
+        }
+    });
     console.log("Initialised!");
 };
 module.exports.close = function(client) {
