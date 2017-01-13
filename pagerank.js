@@ -17,9 +17,8 @@ var getFileName = function(server, category) {
 
 /*
 TODO:
-1. FileSystem file finder.
-2. Efficiency.
-3. Actually giving roles.
+1. Efficiency.
+2. Actually giving roles.
 */
 /*
 var Priority_Queue = function(init, cmpre) {
@@ -95,9 +94,9 @@ PageRank.prototype.iterate = function(iterations) {
  * @return Promise
  */
 PageRank.prototype.parseFile = function(server, category) {
-    console.log("Getting data for "+server.name+" in category "+category);
-    if (category.startsWith("\"")) return new Promise(function(resolve, reject) { reject(); });
-    var fileName = getFileName((this.server = server).name, this.category = category);
+    console.log("Getting data for "+server.id+" in category "+category);
+    if (!category.match(/^[0-9a-zA-Z_]+$/)) return new Promise(function(resolve, reject) { reject(); });
+    var fileName = getFileName((this.server = server).id, this.category = category);
     this.userNames = [];
     this.users = [];
     this.ranks = [];
@@ -171,9 +170,9 @@ PageRank.prototype.parseFile = function(server, category) {
  * @return Promise
  */
 PageRank.prototype.parseFileSafe = function(server, category) {
-    console.log("Getting data for "+server.name+" in category "+category);
-    if (category.startsWith("\"")) return new Promise(function(resolve, reject) { reject(); });
-    var fileName = getFileName((this.server = server).name, this.category = category);
+    console.log("Getting data for "+server.id+" in category "+category);
+    if (!category.match(/^[0-9a-zA-Z_]+$/)) return new Promise(function(resolve, reject) { reject(); });
+    var fileName = getFileName((this.server = server).id, this.category = category);
     this.userNames = [];
     this.users = [];
     this.ranks = [];
@@ -229,7 +228,7 @@ PageRank.prototype.parseFileSafe = function(server, category) {
  * @return Promise
  */
 PageRank.prototype.save = function() {
-    var fileName = getFileName(this.server.name, this.category);
+    var fileName = getFileName(this.server.id, this.category);
     var memoryString = "";
     var N = this.users.length;
     for (var i=0;i<N;i++) {
@@ -410,9 +409,15 @@ module.exports.commands.push({
             var pageRank = pageRanks[getFileName(guild.name, parsedMessage)];
             if (!pageRank) {
                 pageRank = pageRanks[getFileName(guild.name, parsedMessage)] = new PageRank();
-                pageRank.parseFile(guild, parsedMessage);
+                pageRank.parseFile(guild, parsedMessage).then(function() {
+                    sendDM(message, "Created category, or added category to cache.");
+                }).catch(function() {
+                    console.log("Failed to add category.");
+                    delete pageRanks[getFileName(guild.name, parsedMessage)];
+                });
+            } else {
+                sendDM(message, "Category already exists.");
             }
-            sendDM(message, "Created category.");
         } else {
             sendDM(message, "Sorry, you are not a moderator.");
         }
@@ -430,7 +435,30 @@ module.exports.commands.push({
     word: "viewcategories",
     description: "View all categories on the current server. Use: ~M~viewcategories",
     execute: function(message, parsedMessage) {
-        sendDM(message, "Sorry, this isn't working yet. Element118 is looking at accessing file systems.");
+        var guildID = message.guild.id;
+        fs.readdir(__dirname, function(err, files) {
+            if (err) {
+                return;
+            }
+            // files is array of names of files in directory
+            var categories = {};
+            for (var i=0;i<files.length;i++) {
+                if (files[i].startsWith("PageRankRecommendFile"+guildID)) {
+                    var category = files[i].slice(("PageRankRecommendFile"+guildID).length, -4);
+                    categories[category] = true;
+                }
+            }
+            for (var i in pageRanks) {
+                if (pageRanks[i].server.id == guildID) {
+                    categories[pageRanks[i].category] = true;
+                }
+            }
+            var result = "Here is the list of categories on "+message.guild.name+":";
+            for (var i in categories) {
+                result += "\n" + i;
+            }
+            sendDM(message, result);
+        });
     }
 }, {
     word: "viewcategory",
