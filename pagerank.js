@@ -18,7 +18,15 @@ var getFileName = function(server, category) {
 /*
 TODO:
 1. Efficiency.
-2. Actually giving roles.
+2. Refactoring.
+3. Ignore bots.
+4. Handle recommendation input in a better way.
+
+Get names from string
+split on space
+combine data.slice(1)
+search for #number
+take substrings
 */
 /*
 var Priority_Queue = function(init, cmpre) {
@@ -31,6 +39,7 @@ Priority_Queue.prototype.fixHeapAt(where) {
     if (where<=0 ||)
 };
 */
+
 
 /**
  * Damping factor used for PageRank.
@@ -48,6 +57,7 @@ var PageRank = function() {
     this.ranks = [];
     this.adjList = [];
     this.roleName = "";
+    this.role = null;
     this.threshold = function(totalMembers) {
         return 2/totalMembers;
     };
@@ -89,14 +99,101 @@ PageRank.prototype.iterate = function(iterations) {
     }
 };
 /**
+ * Adds and removes roles for users, if their rank is above the threshold.
+ */
+PageRank.prototype.addRoles = function() {
+    if (!this.role) return;
+    var threshold = this.threshold(this.users.length);
+    this.server.members.forEach(function(guildMember) {
+        if (this.ranks[this.userIdMap[guildMember.id]]>=threshold) {
+            // add role
+            var roleExists = guildMember.roles.find("name", this.roleName);
+            if (!roleExists) {
+                guildMember.addRole(this.role).then(function() {
+                    console.log("Added role to user "+guildMember.user.username+".");
+                }).catch(function() {
+                    console.log("Failed to add role.");
+                });
+            }
+        } else {
+            // remove role
+            var roleExists = guildMember.roles.find("name", this.roleName);
+            if (roleExists) {
+                guildMember.removeRole(this.role).then(function() {
+                    console.log("Removed role to user "+guildMember.user.username+".");
+                }).catch(function() {
+                    console.log("Failed to remove role.");
+                });
+            }
+        }
+    }, this);
+};
+/**
+ * Removes user from data.
+ */
+PageRank.prototype.removeUser = function(index) {
+    // Replace member with last member
+    var removeUser = index;
+    var lastMember = this.users.length-1;
+    if (removeUser != lastMember) {
+        // remove user from adjacency list
+        for (var j=0;j<this.adjList.length;j++) {
+            var index = this.adjList[j].indexOf(removeUser);
+            if (index != -1) {
+                this.adjList[j].splice(index, 1);
+            }
+        }
+        // remove user from map
+        delete this.userIdMap[this.users[index]];
+        // replace user in adjacency list
+        for (var j=0;j<this.adjList.length;j++) {
+            var index = this.adjList[j].indexOf(lastMember);
+            if (index != -1) {
+                this.adjList[j][index] = removeUser;
+            }
+        }
+        this.users[removeUser] = this.users[lastMember];
+        this.userNames[removeUser] = this.userNames[lastMember];
+        this.ranks[removeUser] = this.ranks[lastMember];
+        this.adjList[removeUser] = this.adjList[lastMember];
+        this.userIdMap[this.users[lastMember]] = removeUser;
+    }
+    // Pop last member
+    this.users.pop();
+    this.userNames.pop();
+    this.ranks.pop();
+    this.adjList.pop();
+    this.iterate(10);
+    this.addRoles();
+};
+/**
+ * Tries to create a role for this PageRank.
+ */
+PageRank.prototype.getRole = function() {
+    this.roleName = this.category.replace(/_/g, " ");
+    this.role = this.server.roles.find("name", this.roleName);
+    if (!this.role) {
+        var _this = this;
+        this.server.createRole({
+            name: this.roleName
+        }).then(function() {
+            console.log("Role \""+_this.roleName+"\" created!");
+            _this.addRoles();
+        }).catch(function() {
+            console.log("Role \""+_this.roleName+"\" not created!");
+        });
+    }
+};
+/**
  * Tries to find a file corresponding with the server and category.
  * On failure to find file, create data.
  * @return Promise
  */
 PageRank.prototype.parseFile = function(server, category) {
-    console.log("Getting data for "+server.id+" in category "+category);
+    console.log("Getting data for "+server.name+" in category "+category);
     if (!category.match(/^[0-9a-zA-Z_]+$/)) return new Promise(function(resolve, reject) { reject(); });
     var fileName = getFileName((this.server = server).id, this.category = category);
+    this.getRole();
     this.userNames = [];
     this.users = [];
     this.ranks = [];
@@ -134,32 +231,44 @@ PageRank.prototype.parseFile = function(server, category) {
                 if (data[i]) {
                     var curUser = data[i].split(" ");
                     _this.users.push(curUser[0]);
-                    var user = members.get(curUser[0]).user;
-                    _this.userNames.push(user.username+"#"+user.discriminator);
+                    var guildMember = members.get(curUser[0]);
+                    if (guildMember) {
+                        var user = guildMember.user;
+                        _this.userNames.push(user.username+"#"+user.discriminator);
+                    } else {
+                        _this.userNames.push("");
+                    }
                     _this.ranks.push(+curUser[1]);
                     curUser = curUser.slice(2);
                     for (var j=0;j<curUser.length;j++) {
-                        console.log(curUser[j]);
                         curUser[j] = +curUser[j];
                     }
                     _this.adjList.push(curUser);
                 }
             }
             _this.generateUserIdMap();
-            var existNewUsers = false;
+            var existUsersChange = false;
+            // delete users
+            for (var i=_this.users.length-1;i>=0;i--) {
+                if (_this.userNames[i] == "") {
+                    _this.removeUser(i);
+                    existUsersChange = true;
+                }
+            }
             members.forEach(function(value) {
                 if (!value.id) {
-                    existNewUsers = true;
+                    existUsersChange = true;
                     _this.users.push(value.id);
                     _this.userNames.push(user.username+"#"+user.discriminator);
                     _this.ranks.push(0);
                     _this.adjList.push([]);
                 }
             });
-            if (existNewUsers) {
+            if (existUsersChange) {
                 _this.iterate(10);
             }
             _this.generateUserIdMap();
+            _this.addRoles();
             resolve();
         });
     });
@@ -170,7 +279,7 @@ PageRank.prototype.parseFile = function(server, category) {
  * @return Promise
  */
 PageRank.prototype.parseFileSafe = function(server, category) {
-    console.log("Getting data for "+server.id+" in category "+category);
+    console.log("Getting data for "+server.name+" in category "+category);
     if (!category.match(/^[0-9a-zA-Z_]+$/)) return new Promise(function(resolve, reject) { reject(); });
     var fileName = getFileName((this.server = server).id, this.category = category);
     this.userNames = [];
@@ -185,40 +294,52 @@ PageRank.prototype.parseFileSafe = function(server, category) {
                 reject();
                 return;
             }
-            // check file does not exist, if fail, create file data
             data = data.split("\n");
             var N = data.length;
             var members = _this.server.members;
+            _this.getRole();
             for (var i=0;i<N;i++) {
                 if (data[i]) {
                     var curUser = data[i].split(" ");
                     _this.users.push(curUser[0]);
-                    var user = members.get(curUser[0]).user;
-                    _this.userNames.push(user.username+"#"+user.discriminator);
+                    var guildMember = members.get(curUser[0]);
+                    if (guildMember) {
+                        var user = guildMember.user;
+                        _this.userNames.push(user.username+"#"+user.discriminator);
+                    } else {
+                        _this.userNames.push("");
+                    }
                     _this.ranks.push(+curUser[1]);
                     curUser = curUser.slice(2);
                     for (var j=0;j<curUser.length;j++) {
-                        console.log(curUser[j]);
                         curUser[j] = +curUser[j];
                     }
                     _this.adjList.push(curUser);
                 }
             }
             _this.generateUserIdMap();
-            var existNewUsers = false;
+            var existUsersChange = false;
+            // delete users
+            for (var i=_this.users.length-1;i>=0;i--) {
+                if (_this.userNames[i] == "") {
+                    _this.removeUser(i);
+                    existUsersChange = true;
+                }
+            }
             members.forEach(function(value) {
                 if (!value.id) {
-                    existNewUsers = true;
+                    existUsersChange = true;
                     _this.users.push(value.id);
                     _this.userNames.push(user.username+"#"+user.discriminator);
                     _this.ranks.push(0);
                     _this.adjList.push([]);
                 }
             });
-            if (existNewUsers) {
+            if (existUsersChange) {
                 _this.iterate(10);
             }
             _this.generateUserIdMap();
+            _this.addRoles();
             resolve();
         });
     });
@@ -289,16 +410,16 @@ var sendDM = function(message, toSend) {
  */
 module.exports.commands.push({
     word: "recommend",
-    description: "Recommend someone in a category. Use: ~M~recommend some_category username0#discriminator0 username1#discriminator1 username2#discriminator2 ...",
+    description: "Recommend someone in a category. Use: ~M~recommend some_category \"username0#discriminator0 \"username1#discriminator1 \"username2#discriminator2 ...",
     execute: function(message, parsedMessage) {
         var guild = message.guild;
         var tokens = parsedMessage.split(/ "/g);
         var category = tokens[0];
         var user = message.author.id;
         // check if the pageRank has already existed
-        var pageRank = pageRanks[getFileName(guild.name, category)];
+        var pageRank = pageRanks[getFileName(guild.id, category)];
         if (!pageRank) {
-            pageRank = pageRanks[getFileName(guild.name, category)] = new PageRank();
+            pageRank = pageRanks[getFileName(guild.id, category)] = new PageRank();
             pageRank.parseFileSafe(guild, category).then(function() {
                 // do the update
                 user = pageRank.userIdMap[user];
@@ -324,6 +445,7 @@ module.exports.commands.push({
             }
             pageRank.adjList[user] = unique(pageRank.adjList[user]);
             pageRank.iterate(10);
+            pageRank.addRoles();
             console.log("Done iterations.");
             console.log(pageRank.adjList[user]);
             sendDM(message, "Updated recommendations.");
@@ -332,25 +454,26 @@ module.exports.commands.push({
     }
 }, {
     word: "unrecommend",
-    description: "Unrecommend someone in a category. Use: ~M~unrecommend some_category username0#discriminator0 username1#discriminator1 username2#discriminator2 ...",
+    description: "Unrecommend someone in a category. Use: ~M~unrecommend some_category \"username0#discriminator0 \"username1#discriminator1 \"username2#discriminator2 ...",
     execute: function(message, parsedMessage) {
         var guild = message.guild;
-        var tokens = parsedMessage.split(" ");
+        var tokens = parsedMessage.split(/ "/g);
         var category = tokens[0];
         var user = message.author.id;
         // check if the pageRank has already existed
-        var pageRank = pageRanks[getFileName(guild.name, category)];
+        var pageRank = pageRanks[getFileName(guild.id, category)];
         if (!pageRank) {
-            pageRank = pageRanks[getFileName(guild.name, category)] = new PageRank();
+            pageRank = pageRanks[getFileName(guild.id, category)] = new PageRank();
             pageRank.parseFileSafe(guild, category).then(function() {
                 // do the update
                 user = pageRank.userIdMap[user];
                 for (var i=1;i<tokens.length;i++) {
-                    var index = pageRank.userNames.indexOf(tokens[i]);
-                    if (index !== -1) index = pageRank.adjList[user].indexOf(tokens[i]);
+                    var index = pageRank.userNames.indexOf(tokens[i].replace(/\\"/g, "\""));
+                    if (index !== -1) index = pageRank.adjList[user].indexOf(index);
                     if (index !== -1) pageRank.adjList[user].splice(index, 1);
                 }
                 pageRank.iterate(10);
+                pageRank.addRoles();
                 sendDM(message, "Updated recommendations.");
             }).catch(function() {
                 console.log("Failed to unrecommend.");
@@ -359,11 +482,12 @@ module.exports.commands.push({
             // do the update
             user = pageRank.userIdMap[user];
             for (var i=1;i<tokens.length;i++) {
-                var index = pageRank.userNames.indexOf(tokens[i]);
-                if (index !== -1) index = pageRank.adjList[user].indexOf(tokens[i]);
+                var index = pageRank.userNames.indexOf(tokens[i].replace(/\\"/g, "\""));
+                if (index !== -1) index = pageRank.adjList[user].indexOf(index);
                 if (index !== -1) pageRank.adjList[user].splice(index, 1);
             }
             pageRank.iterate(10);
+            pageRank.addRoles();
             sendDM(message, "Updated recommendations.");
         }
     }
@@ -376,9 +500,9 @@ module.exports.commands.push({
         var category = tokens[0];
         var user = message.author.id;
         // check if the pageRank has already existed
-        var pageRank = pageRanks[getFileName(guild.name, category)];
+        var pageRank = pageRanks[getFileName(guild.id, category)];
         if (!pageRank) {
-            pageRank = pageRanks[getFileName(guild.name, category)] = new PageRank();
+            pageRank = pageRanks[getFileName(guild.id, category)] = new PageRank();
             pageRank.parseFileSafe(guild, category).then(function() {
                 user = pageRank.userIdMap[user];
                 var recommendations = "";
@@ -406,14 +530,14 @@ module.exports.commands.push({
         var roles = message.member.roles;
         if (roles.find("name", "Moderator")) { // if I can find a moderator role
             var guild = message.guild;
-            var pageRank = pageRanks[getFileName(guild.name, parsedMessage)];
+            var pageRank = pageRanks[getFileName(guild.id, parsedMessage)];
             if (!pageRank) {
-                pageRank = pageRanks[getFileName(guild.name, parsedMessage)] = new PageRank();
+                pageRank = pageRanks[getFileName(guild.id, parsedMessage)] = new PageRank();
                 pageRank.parseFile(guild, parsedMessage).then(function() {
                     sendDM(message, "Created category, or added category to cache.");
                 }).catch(function() {
                     console.log("Failed to add category.");
-                    delete pageRanks[getFileName(guild.name, parsedMessage)];
+                    delete pageRanks[getFileName(guild.id, parsedMessage)];
                 });
             } else {
                 sendDM(message, "Category already exists.");
@@ -428,7 +552,38 @@ module.exports.commands.push({
     execute: function(message, parsedMessage) {
         var roles = message.member.roles;
         if (roles.find("name", "Moderator")) { // if I can find a moderator role
-            sendDM(message, "Sorry, this does not work yet. You can contact Element118 to delete the category for now.");
+            var guild = message.guild;
+            var fileName = getFileName(guild.id, parsedMessage);
+            var pageRank = pageRanks[fileName];
+            if (!pageRank) {
+                pageRank = pageRanks[fileName] = new PageRank();
+                pageRank.parseFile(guild, parsedMessage).then(function() {
+                    fs.unlink(__dirname + "/" + fileName, function(err) {
+                        if (err) {
+                            console.log("Failed to delete file.");
+                        } else {
+                            console.log("Deleted "+fileName);
+                            sendDM(message, "Deleted category.");
+                        }
+                    });
+                    pageRank.role.delete();
+                    delete pageRanks[fileName];
+                }).catch(function() {
+                    console.log("Failed to delete category (already deleted).");
+                    delete pageRanks[fileName];
+                });
+            } else {
+                fs.unlink(__dirname + "/" + fileName, function(err) {
+                    if (err) {
+                        console.log("Failed to delete file.");
+                    } else {
+                        console.log("Deleted "+fileName);
+                        sendDM(message, "Deleted category.");
+                    }
+                });
+                pageRank.role.delete();
+                delete pageRanks[fileName];
+            }
         }
     }
 }, {
@@ -470,11 +625,12 @@ module.exports.commands.push({
         var numUsers = tokens[1] || 10; // default: 10
         var user = message.author.id;
         // check if the pageRank has already existed
-        var pageRank = pageRanks[getFileName(guild.name, category)];
+        var pageRank = pageRanks[getFileName(guild.id, category)];
         if (!pageRank) {
-            pageRank = pageRanks[getFileName(guild.name, category)] = new PageRank();
+            pageRank = pageRanks[getFileName(guild.id, category)] = new PageRank();
             pageRank.parseFile(guild, category).then(function() {
                 pageRank.iterate(10); // to be safe
+                pageRank.addRoles();
                 console.log("Done iterations.");
                 var selectedUsers = [];
                 for (var i=0;i<pageRank.users.length;i++) {
@@ -503,6 +659,7 @@ module.exports.commands.push({
             });
         } else {
             pageRank.iterate(10); // to be safe
+            pageRank.addRoles();
             console.log("Done iterations.");
             var selectedUsers = [];
             for (var i=0;i<pageRank.users.length;i++) {
@@ -539,36 +696,7 @@ module.exports.initialise = function(client) {
             if (pageRanks[i].server.id == guildMember.guild.id) {
                 // Replace member with last member
                 var removeUser = pageRanks[i].userIdMap[user.id];
-                var lastMember = pageRanks[i].users.length-1;
-                if (removeUser != lastMember) {
-                    // remove user from adjacency list
-                    for (var j=0;j<pageRanks[i].adjList.length;j++) {
-                        var index = pageRanks[i].adjList[j].indexOf(removeUser);
-                        if (index != -1) {
-                            pageRanks[i].adjList[j].splice(index, 1);
-                        }
-                    }
-                    // remove user from map
-                    delete pageRanks[i].userIdMap[user.id];
-                    // replace user in adjacency list
-                    for (var j=0;j<pageRanks[i].adjList.length;j++) {
-                        var index = pageRanks[i].adjList[j].indexOf(lastMember);
-                        if (index != -1) {
-                            pageRanks[i].adjList[j][index] = removeUser;
-                        }
-                    }
-                    pageRanks[i].users[removeUser] = pageRanks[i].users[lastMember];
-                    pageRanks[i].userNames[removeUser] = pageRanks[i].userNames[lastMember];
-                    pageRanks[i].ranks[removeUser] = pageRanks[i].ranks[lastMember];
-                    pageRanks[i].adjList[removeUser] = pageRanks[i].adjList[lastMember];
-                    pageRanks[i].userIdMap[pageRanks[i].users[lastMember]] = removeUser;
-                }
-                // Pop last member
-                pageRanks[i].users.pop();
-                pageRanks[i].userNames.pop();
-                pageRanks[i].ranks.pop();
-                pageRanks[i].adjList.pop();
-                pageRanks[i].iterate(10);
+                pageRanks[i].removeUser(removeUser);
             }
         }
     });
@@ -584,6 +712,7 @@ module.exports.initialise = function(client) {
                 pageRanks[i].adjList.push([]);
                 pageRanks[i].userIdMap[user.id] = pageRanks[i].users.length-1;
                 pageRanks[i].iterate(10);
+                pageRank.addRoles();
             }
         }
     });
