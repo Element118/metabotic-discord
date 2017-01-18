@@ -1,1 +1,2 @@
 module Element118 metabotic-discord friendly.js
+module Element118 metabotic-discord pagerank.js
