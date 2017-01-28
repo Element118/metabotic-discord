@@ -1,9 +1,8 @@
 var fs = require("fs");
-/**
- * This is a module for making a PageRank system for recommendations on Discord.
- */
 module.exports = {
     name: "PageRankRecommend", // name of module
+    author: "Element118",
+    description: "A PageRank system for recommendations on Discord, such that the weight of recommendations those people who are better count more.",
     commands: [],
     initialise: null, // or initialize. Might include file I/O
     close: null // to end. Might include file I/O. May return Promise.
@@ -29,7 +28,7 @@ TODO:
 2. Refactoring.
 */
 
-var Priority_Queue = function(init, cmpre) {
+var Priority_Queue = function(cmpre, init) {
     this.data = init || [null];
     this.compare = cmpre || function(a, b) {
         return a<b;
@@ -41,7 +40,7 @@ Priority_Queue.prototype.fixHeapAt = function(where) {
     if (child+1 < this.data.length && this.compare(this.data[child], this.data[child+1])) {
         child++;
     }
-    if (where && this.compare(this.data[child], this.data[where])) {
+    if (where && this.compare(this.data[where], this.data[child])) {
         // swap
         var temp = this.data[where];
         this.data[where] = this.data[child];
@@ -62,15 +61,20 @@ Priority_Queue.prototype.top = function(what) {
     return this.data[1];
 };
 Priority_Queue.prototype.pop = function(what) {
-    // exchange and pop
-    this.data[1] = this.data[this.data.length-1]; // take from back
+    // exchange with back and pop
+    this.data[1] = this.data[this.data.length-1];
     this.data.pop();
     var position = 1;
     while (position) {
         position = this.fixHeapAt(position);
     }
 };
-
+Priority_Queue.prototype.size = function() {
+    return this.data.length-1;
+};
+Priority_Queue.prototype.empty = function() {
+    return this.data.length>1;
+};
 /**
  * Damping factor used for PageRank.
  */
@@ -92,7 +96,6 @@ var PageRank = function() {
         return 2/totalMembers;
     };
 };
-
 /**
  * Generates a map from the Discord User ID to the number used in this object.
  */
@@ -104,12 +107,12 @@ PageRank.prototype.generateUserIdMap = function() {
 };
 /**
  * Iterates to improve accuracy of ranks, by default 10 times.
+ * @param {Number} iterations
  */
 PageRank.prototype.iterate = function(iterations) {
     iterations = iterations || 1;
     var N = this.users.length;
     while (iterations-->0) {
-        console.log("Iterating... "+iterations+" times left...");
         var newRanks = new Array(N);
         for (var i=0;i<N;i++) {
             newRanks[i] = (1-dampingFactor)/N;
@@ -216,6 +219,7 @@ PageRank.prototype.getRole = function() {
 };
 /**
  * Parse the data from a file.
+ * @param {String} data
  */
 PageRank.prototype.parseData = function(data) {
     // check file does not exist, if fail, create file data
@@ -268,6 +272,8 @@ PageRank.prototype.parseData = function(data) {
 /**
  * Tries to find a file corresponding with the server and category.
  * On failure to find file, create data.
+ * @param {Guild} server server to make ranks in
+ * @param {String} category name of category
  * @return Promise
  */
 PageRank.prototype.parseFile = function(server, category) {
@@ -291,7 +297,7 @@ PageRank.prototype.parseFile = function(server, category) {
                     var users = Array.from(members.keys());
                     var N = users.length;
                     for (var i=0;i<N;i++) {
-                        var user = members.get(_this.users[i]).user;
+                        var user = members.get(users[i]).user;
                         if (!user.bot) { // check if bot
                             _this.users.push(users[i]);
                             _this.userNames.push(user.username+"#"+user.discriminator);
@@ -386,6 +392,49 @@ PageRank.prototype.addRecommendations = function(user, recommendations, iteratio
     this.iterate(iterations || 10);
     this.addRoles();
 };
+/**
+ * Adds users.
+ * @param {Number} numUsers number of top users to show
+ * @return string containing users
+ */
+PageRank.prototype.getTopUsers = function(numUsers) {
+    this.iterate(10);
+    this.addRoles();
+    var _this = this;
+    var selectedUsers = new Priority_Queue(function(a, b) {
+        return _this.ranks[a]>_this.ranks[b];
+    });
+    for (var i=0;i<this.users.length;i++) {
+        if (selectedUsers.size() < numUsers) {
+            selectedUsers.push(i);
+        } else if (this.ranks[selectedUsers.top()] < this.ranks[i]) {
+            selectedUsers.pop();
+            selectedUsers.push(i);
+        }
+    }
+    var result = "Here are the top "+numUsers+" in category \""+this.category+"\" in the server \""+this.server.name+"\"";
+    while (selectedUsers.size()) {
+        result += "\n" + this.ranks[selectedUsers.top()].toFixed(3) + "\t" + this.userNames[selectedUsers.top()];
+        selectedUsers.pop();
+    }
+    return result;
+};
+/**
+ * Get all users with the role.
+ * @return string containing users
+ */
+PageRank.prototype.getRoleUsers = function() {
+    this.iterate(10);
+    this.addRoles();
+    var threshold = this.threshold(this.users.length);
+    var output = "Here are users with the role "+this.roleName+":";
+    this.server.members.forEach(function(guildMember) {
+        if (this.ranks[this.userIdMap[guildMember.id]]>=threshold) {
+            output += "\n" + this.ranks[this.userIdMap[guildMember.id]].toFixed(3) + "\t" + this.userNames[this.userIdMap[guildMember.id]];
+        }
+    }, this);
+    return output;
+};
 
 /**
  * Using an object to store the PageRank objects in.
@@ -400,14 +449,14 @@ var Client = null;
  * Standard sending functions.
  */
 var send = function(message, toSend) {
-    message.channel.sendMessage(toSend).then(function() {
+    message.channel.sendMessage("\u200b"+toSend).then(function() {
         console.log("Message sent.");
     }).catch(function() {
         console.log("Failed to send message.");
     });
 };
 var sendDM = function(message, toSend) {
-    message.author.sendMessage(toSend).then(function() {
+    message.author.sendMessage("\u200b"+toSend).then(function() {
         console.log("DM sent.");
     }).catch(function() {
         console.log("Failed to send DM.");
@@ -432,6 +481,10 @@ module.exports.commands.push({
         var guild = message.guild;
         var data = getCommandData(parsedMessage);
         var users = data.users;
+        if (!users || !users.length) {
+            sendDM(message, "No recommendations detected!");
+            return;
+        }
         var category = data.category;
         var user = message.author.id;
         // check if the pageRank has already existed
@@ -631,63 +684,37 @@ module.exports.commands.push({
         var tokens = parsedMessage.split(" ");
         var category = tokens[0];
         var numUsers = tokens[1] || 10; // default: 10
-        var user = message.author.id;
         // check if the pageRank has already existed
         var pageRank = pageRanks[getFileName(guild.id, category)];
         if (!pageRank) {
             pageRank = pageRanks[getFileName(guild.id, category)] = new PageRank();
             pageRank.parseFile(guild, category).then(function() {
-                pageRank.iterate(10); // to be safe
-                pageRank.addRoles();
-                console.log("Done iterations.");
-                var selectedUsers = new Priority_Queue(function(a, b) {
-                    return pageRanks.ranks[a]>pageRanks.ranks[b];
-                });
-                for (var i=0;i<pageRank.users.length;i++) {
-                    if (selectedUsers.length < numUsers) {
-                        selectedUsers.push(i);
-                    } else if (pageRanks.ranks[selectedUsers.top()] < pageRank.ranks[i]) {
-                        selectedUsers.pop();
-                        selectedUsers.push(i);
-                    }
-                }
-                selectedUsers.sort(function(a, b) {
-                    return pageRank.ranks[a]-pageRank.ranks[b];
-                });
-                result = "Here are the top "+numUsers+" in category \""+category+"\" in the server \""+guild.name+"\"";
-                for (var i=selectedUsers.length-1;i>=0;i--) {
-                    result += "\n" + pageRank.ranks[selectedUsers[i]].toFixed(3) + "\t" + pageRank.userNames[selectedUsers[i]] 
-                }
-                sendDM(message, result);
+                sendDM(message, pageRank.getTopUsers(numUsers));
             }).catch(function() {
                 console.log("Failed to view top users.");
             });
         } else {
-            pageRank.iterate(10); // to be safe
-            pageRank.addRoles();
-            console.log("Done iterations.");
-            var selectedUsers = [];
-            for (var i=0;i<pageRank.users.length;i++) {
-                if (selectedUsers.length < numUsers) {
-                    selectedUsers.push(i);
-                } else {
-                    // TODO: Increase efficiency later
-                    selectedUsers.sort(function(a, b) {
-                        return pageRank.ranks[a]-pageRank.ranks[b];
-                    });
-                    if (pageRank.ranks[selectedUsers[0]] < pageRank.ranks[i]) {
-                        selectedUsers[0] = i;
-                    }
-                }
-            }
-            selectedUsers.sort(function(a, b) {
-                return pageRank.ranks[a]-pageRank.ranks[b];
+            sendDM(message, pageRank.getTopUsers(numUsers));
+        }
+    }
+}, {
+    word: "viewrole",
+    description: "View the users with roles in a particular category. Use: ~M~viewrole some_category",
+    execute: function(message, parsedMessage) {
+        var guild = message.guild;
+        var tokens = parsedMessage.split(" ");
+        var category = tokens[0];
+        // check if the pageRank has already existed
+        var pageRank = pageRanks[getFileName(guild.id, category)];
+        if (!pageRank) {
+            pageRank = pageRanks[getFileName(guild.id, category)] = new PageRank();
+            pageRank.parseFile(guild, category).then(function() {
+                sendDM(message, pageRank.getRoleUsers());
+            }).catch(function() {
+                console.log("Failed to view top users.");
             });
-            result = "Here are the top "+numUsers+" in category \""+category+"\" in the server \""+guild.name+"\"";
-            for (var i=selectedUsers.length-1;i>=0;i--) {
-                result += "\n" + pageRank.ranks[selectedUsers[i]].toFixed(3) + "\t" + pageRank.userNames[selectedUsers[i]] 
-            }
-            sendDM(message, result);
+        } else {
+            sendDM(message, pageRank.getRoleUsers());
         }
     }
 });
