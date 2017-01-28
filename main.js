@@ -3,8 +3,10 @@ var fs = require("fs");
 var request = require("request");
 var zeroWidthSpace = "\u200b"; // at front of safe bot things
 var token = "";
+var logMessages = false;
 var Command, commands;
-// get token from other file
+var bot = new Discord.Client();
+// get token from another file
 fs.readFile(__dirname + "/token.txt", "utf8", function(err, data) {
     if (err) {
         return console.log(err);
@@ -15,9 +17,13 @@ fs.readFile(__dirname + "/token.txt", "utf8", function(err, data) {
         console.log("Logged in!");
         bot.on("message", function(message) {
             detectCommand(message);
+            if (logMessages) {
+                console.log(message.author.username + " wrote: (At "+ message.createdTimestamp +")");
+                console.log(message.content);
+            }
         });
-        bot.user.setStatus("online", "with GitHub", function(err) {
-            console.log("Failed to play on GitHub.");
+        bot.user.setStatus("online", Command.prefix+"help", function(err) {
+            console.log("Failed to play help.");
         });
     }).catch(function(err) {
         console.log("Cannot log in!");
@@ -26,14 +32,14 @@ fs.readFile(__dirname + "/token.txt", "utf8", function(err, data) {
 });
 
 var send = function(message, toSend) {
-    message.channel.sendMessage(toSend).then(function() {
+    message.channel.sendMessage(zeroWidthSpace + toSend).then(function() {
         console.log("Message sent.");
     }).catch(function() {
         console.log("Failed to send message.");
     });
 };
 var sendDM = function(message, toSend) {
-    message.author.sendMessage(toSend).then(function() {
+    message.author.sendMessage(zeroWidthSpace + toSend).then(function() {
         console.log("DM sent.");
     }).catch(function() {
         console.log("Failed to send DM.");
@@ -53,12 +59,9 @@ var getFileName = function(user, repo, file) {
 };
 var runModule = function(fileName, message) {
     try {
-        var module = require("./"+fileName.slice(0, -3)); // remove.js
-        console.log(module);
-        modules.push(module);
-        for (var i in module) {
-            console.log("Found "+i);
-        }
+        console.log("require(\"./"+fileName.slice(0, -3)+"\")");
+        var module = require("./"+fileName.slice(0, -3)); // remove the .js
+        modules.push(module); // add the module
         if (module.initialise) {
             module.initialise(bot);
         } else if (module.initialize) {
@@ -77,16 +80,14 @@ var runModule = function(fileName, message) {
         });
         if (message) {
             send(message, "Loaded module!");
-        } else {
-            console.log("Loaded module!");
         }
+        console.log("Loaded module!");
     } catch (error) {
         console.log(error);
         if (message) {
             send(message, "The module seems to have a problem.");
-        } else {
-            console.log("The module seems to have a problem.");
         }
+        console.log("The module seems to have a problem.");
     }
 };
 
@@ -98,6 +99,9 @@ fs.readFile(__dirname + "/autoload.txt", "utf8", function(err, data) {
     var tokens = data.split("\n");
     for (var i=0;i<tokens.length;i++) {
         if (tokens[i] !== "") {
+            // windows is so annoying
+            if (tokens[i].endsWith("\r")) tokens[i] = tokens[i].slice(0, -1);
+            console.log("File: \""+tokens[i]+"\"");
             runModule(tokens[i]);
         }
     }
@@ -132,13 +136,14 @@ var loadModule = function(message, user, repo, file) {
                 });
                 console.log("New module!");
             });
+        } else {
+            console.log(response);
         }
     });
 };
 var currentModule = -1;
-process.stdin.on("data", function(data) {
-    data = (data+"").trim();
-    if (data == "exit" || data == "logout") {
+var consoleCommands = {
+    "exit": function(args) {
         console.log("Trying to save data...");
         var modulesDone = 0;
         for (var i=0;i<modules.length;i++) {
@@ -170,8 +175,17 @@ process.stdin.on("data", function(data) {
             console.log("All modules completed!");
             process.exit();
         }
-    } else if (data.startsWith("checkmodules ")) {
-        var num = data.substr("checkmodules ".length)%checkModules.length;
+    },
+    "log on": function(args) {
+        logMessages = true;
+        console.log("Logging messages.");
+    },
+    "log off": function(args) {
+        logMessages = false;
+        console.log("Not logging messages.");
+    },
+    "checkmodules ": function(args) {
+        var num = args%checkModules.length;
         if (0 <= num && num < checkModules.length) {
             currentModule = num;
             console.log(checkModules[currentModule].content);
@@ -179,24 +193,45 @@ process.stdin.on("data", function(data) {
             currentModule = -1;
             console.log("Cannot parse number, or no modules found.");
         }
-    } else if (data === "verify") {
+    },
+    "verify": function(args) {
         runModule(checkModules[currentModule].fileName, checkModules[currentModule].message);
         checkModules.splice(currentModule, 1);
         currentModule = -1;
-    } else if (data === "disapprove") {
+    },
+    "disapprove": function(args) {
         checkModules.splice(currentModule, 1);
         currentModule = -1;
-    } else if (data === "allmodules") {
+    },
+    "allmodules": function(args) {
         console.log("Here are all the modules:");
         for (var i=0;i<modules.length;i++) {
             console.log(modules[i].name);
         }
-    } else {
-        console.log("Noted "+data.length+" characters: \""+data+"\".");
+    },
+    "help": function(args) {
+        console.log("Here are all the console commands:");
+        for (var i=0;i<modules.length;i++) {
+            for (var i in consoleCommands) { 
+                console.log("\""+i+"\"");
+            }
+        }
+    },
+};
+// synonyms
+consoleCommands.logout = consoleCommands.exit;
+// handle console
+process.stdin.on("data", function(data) {
+    data = (data+"").trim();
+    for (var i in consoleCommands) { 
+        if (data.startsWith(i)) {
+            consoleCommands[i](data.substr(i.length));
+            return;
+        }
     }
+    console.log("Noted "+data.length+" characters: \""+data+"\".");
 });
 
-var bot = new Discord.Client();
 Command = function(config) {
     this.word = config.word;
     this.execute = config.execute || function(message, parsedMessage) { send(message, "Not implemented yet."); };
@@ -302,6 +337,6 @@ var detectCommand = function(message) {
             return true;
         }
     }
-    send(message, "Sorry, that was not a valid command.");
+    sendDM(message, "Sorry, that was not a valid command.");
     return false;
 };
