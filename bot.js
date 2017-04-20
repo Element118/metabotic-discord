@@ -46,17 +46,7 @@ var sendDM = function(message, toSend) {
     });
 };
 
-/** Github interaction **/
-var githubToken = "";
 var modules = [];
-var checkModules = [];
-var apiString = function(user, repo, file) {
-    return "https://api.github.com/repos/"+user+"/"+repo+"/contents/"+file+"?access_token="+gitHubToken;
-};
-var getFileName = function(user, repo, file) {
-    if (!file.endsWith(".js")) file += ".js"; // slightly safer
-    return "module "+user+" "+repo+" "+file;
-};
 var sortCommands = function() {
     commands.sort(function(a, b) {
         if ((a.namespace?a.namespace+".":"")+a.word < (b.namespace?b.namespace+".":"")+b.word) return -1;
@@ -110,41 +100,6 @@ fs.readFile(__dirname + "/autoload.txt", "utf8", function(err, data) {
     }
 });
 
-var loadModule = function(message, user, repo, file) {
-    fileName = getFileName(user, repo, file);
-    apiCall = apiString(user, repo, file);
-    request({
-        url: apiCall,
-        headers: {
-            "User-Agent": "Element118"
-        }
-    }, function(error, response, body) {
-        if (error) {
-            console.log("API call error!");
-            console.log(error);
-            return;
-        }
-        if (response.statusCode === 200) {
-            var info = JSON.parse(body);
-            var program = new Buffer(info.content, "base64");
-            fs.writeFile(__dirname + "/" + fileName, program, function(error) {
-                if (error) {
-                    console.log(error);
-                    return;
-                }
-                checkModules.push({
-                    fileName: fileName,
-                    message: message,
-                    content: program.toString("ascii")
-                });
-                console.log("New module!");
-            });
-        } else {
-            console.log(response);
-        }
-    });
-};
-var currentModule = -1;
 var consoleCommands = {
     "exit": function(args) {
         console.log("Trying to save data...");
@@ -186,31 +141,6 @@ var consoleCommands = {
     "log off": function(args) {
         logMessages = false;
         console.log("Not logging messages.");
-    },
-    "checkmodules ": function(args) {
-        var num = args%checkModules.length;
-        if (0 <= num && num < checkModules.length) {
-            currentModule = num;
-            console.log(checkModules[currentModule].content);
-        } else {
-            currentModule = -1;
-            console.log("Cannot parse number, or no modules found.");
-        }
-    },
-    "verify": function(args) {
-        runModule(checkModules[currentModule].fileName, checkModules[currentModule].message);
-        checkModules.splice(currentModule, 1);
-        currentModule = -1;
-    },
-    "disapprove": function(args) {
-        checkModules.splice(currentModule, 1);
-        currentModule = -1;
-    },
-    "allmodules": function(args) {
-        console.log("Here are all the modules:");
-        for (var i=0;i<modules.length;i++) {
-            console.log(modules[i].name);
-        }
     },
     "help": function(args) {
         console.log("Here are all the console commands:");
@@ -258,14 +188,6 @@ var parseTime = function(milliseconds) {
         +(milliseconds?milliseconds+" milliseconds":"");
 };
 
-fs.readFile(__dirname + "/githubtoken.txt", "utf8", function(err, data) {
-    if (err) {
-        return console.log(err);
-    }
-    gitHubToken = data;
-    console.log("Obtained GitHub token!");
-});
-
 commands = [
     new Command({
         word: "help",
@@ -308,18 +230,6 @@ commands = [
         description: "Oh, you want to know more about me? I'm flattered...",
         execute: function(message, parsedMessage) {
             sendDM(message, "Visit me on GitHub: https://github.com/Element118/metabotic-discord");
-        }
-    }), new Command({
-        word: "addmodule",
-        description: "Design a bot!",
-        execute: function(message, parsedMessage) {
-            var tokens = parsedMessage.split(" ");
-            if (tokens.length >= 3) {
-                var user = tokens[0], repo = tokens[1], file = tokens.slice(2).join(" ");
-                loadModule(message, user, repo, file);
-            } else {
-                send(message, "The command expects 3 arguments, GitHub username, name of repository, file name.");
-            }
         }
     })
 ];
