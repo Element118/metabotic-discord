@@ -57,6 +57,13 @@ var getFileName = function(user, repo, file) {
     if (!file.endsWith(".js")) file += ".js"; // slightly safer
     return "module "+user+" "+repo+" "+file;
 };
+var sortCommands = function() {
+    commands.sort(function(a, b) {
+        if ((a.namespace?a.namespace+".":"")+a.word < (b.namespace?b.namespace+".":"")+b.word) return -1;
+        if ((a.namespace?a.namespace+".":"")+a.word > (b.namespace?b.namespace+".":"")+b.word) return 1;
+        return 0;
+    });
+};
 var runModule = function(fileName, message) {
     try {
         console.log("require(\"./"+fileName.slice(0, -3)+"\")");
@@ -70,14 +77,11 @@ var runModule = function(fileName, message) {
         if (module.commands) {
             for (var i=0;i<module.commands.length;i++) {
                 console.log("New command: " + module.commands[i].word);
+                module.commands[i].namespace = module.name.replace(/ /g, "");
                 commands.push(new Command(module.commands[i]));
             }
         }
-        commands.sort(function(a, b) {
-            if (a.word < b.word) return -1;
-            if (a.word > b.word) return 1;
-            return 0;
-        });
+        sortCommands();
         if (message) {
             send(message, "Loaded module!");
         }
@@ -99,7 +103,6 @@ fs.readFile(__dirname + "/autoload.txt", "utf8", function(err, data) {
     var tokens = data.split("\n");
     for (var i=0;i<tokens.length;i++) {
         if (tokens[i] !== "") {
-            // windows is so annoying
             if (tokens[i].endsWith("\r")) tokens[i] = tokens[i].slice(0, -1);
             console.log("File: \""+tokens[i]+"\"");
             runModule(tokens[i]);
@@ -233,9 +236,10 @@ process.stdin.on("data", function(data) {
 });
 
 Command = function(config) {
+    this.namespace = config.namespace;
     this.word = config.word;
     this.execute = config.execute || function(message, parsedMessage) { send(message, "Not implemented yet."); };
-    this.description = config.description || "No description available."
+    this.description = config.description || "No description available.";
 };
 Command.prefix = "~M~";
 Command.check = function(command) {
@@ -271,14 +275,14 @@ commands = [
                 var helpText = "Here are the commands you can use:\n```";
                 helpText += Command.prefix + commands[0].word;
                 for (var i=1;i<commands.length;i++) {
-                    helpText += ", " + Command.prefix + commands[i].word;
+                    helpText += ", " + Command.prefix + (commands[i].namespace?commands[i].namespace+".":"") + commands[i].word;
                 }
                 helpText += "```\nSay `"+Command.prefix+"help command` to get help about a specific command.";
                 sendDM(message, helpText); // send help as DM
             } else {
                 for (var i=0;i<commands.length;i++) {
-                    if (parsedMessage === commands[i].word) {
-                        sendDM(message, Command.prefix + commands[i].word + ": " + commands[i].description);
+                    if (parsedMessage === commands[i].word || parsedMessage === Command.prefix + commands[i].word || commands[i].namespace && (parsedMessage === commands[i].namespace + "." + commands[i].word || parsedMessage === Command.prefix + commands[i].namespace + "." + commands[i].word)) {
+                        sendDM(message, Command.prefix + (commands[i].namespace?commands[i].namespace+".":"") + commands[i].word + ": " + commands[i].description);
                         return; // done
                     }
                 }
@@ -319,11 +323,7 @@ commands = [
         }
     })
 ];
-commands.sort(function(a, b) {
-    if (a.word < b.word) return -1;
-    if (a.word > b.word) return 1;
-    return 0;
-});
+sortCommands();
 
 var detectCommand = function(message) {
     var tokens = message.content.split(" ");
@@ -332,7 +332,7 @@ var detectCommand = function(message) {
     if (!Command.check(instruction)) return;
     var restOfMessage = tokens.slice(commandSpaces+1).join(" ");
     for (var i=0;i<commands.length;i++) {
-        if (instruction === Command.prefix + commands[i].word) {
+        if (instruction === Command.prefix + commands[i].word || commands[i].namespace && instruction === Command.prefix + commands[i].namespace + "."+ commands[i].word) {
             commands[i].execute(message, restOfMessage);
             return true;
         }
